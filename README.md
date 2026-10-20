@@ -78,6 +78,5 @@ python examples/bench.py --shape 512 512 --steps 500 --device mps
 ## 尚未实现
 
 - `D3Q19` / `D3Q27`：只有速度集元数据和类，调用即 `NotImplementedError`
-- Zou/He 速度入口与压强出口
 - HDF5 / VTK 输出（`lbm/io/h5.py`、`lbm/io/vtk.py` 是 stub）
 - TRT / MRT / 滑移边界 / 多相 / 传热 / 多卡
