@@ -1,4 +1,6 @@
-# LBM on PyTorch
+# LBM-torch
+
+USED LLM EXCLUSIVELY.
 
 格子 Boltzmann 求解器。v1 只实现 **D2Q9**，PyTorch 后端，可跑 CPU / MPS / CUDA。
 架构上按"换模型不改代码"设计，下一步是 MRT + 滑移边界 + 可变粘度。
