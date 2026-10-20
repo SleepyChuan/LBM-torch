@@ -14,13 +14,15 @@ nu  = (tau - 0.5) / 3
 要求 `nu > 0`，因此 `tau > 0.5`。solver 构造时就按 `nu` 算出 `tau`，
 不要让用户直接传 `tau`——两套参数并存迟早会不一致。
 
-`Lambda` 只在 TRT 时起作用，v1 接受但忽略。以后接 TRT 时用：
+`Lambda` 是 TRT 的 magic parameter，默认 `3/16`：
 
 ```
-Lambda = (tau_plus - 0.5) * (tau_minus - 0.5)
-tau_plus = tau    (由 nu 得到)
-tau_minus = 0.5 + Lambda / (tau - 0.5)
+tau_plus  = tau = 3*nu + 0.5
+Lambda    = (tau_plus - 0.5)(tau_minus - 0.5)
+tau_minus = 0.5 + Lambda / (tau_plus - 0.5)
 ```
+
+`collision="bgk"` 时 `Lambda` 无意义，传了会告警并忽略。
 
 ## D2Q9 方向表
 
@@ -94,6 +96,35 @@ S_i = w_i * (1 - 1/(2*tau)) * [ (c_i - u)/cs2 + (c_i·u)/cs4 * c_i ] · F
 
 注意 `(1 - 1/(2*tau))` 这个因子：漏掉它，程序照样能跑、照样稳定，
 但稳态速度会偏低，而且误差随 `tau` 变化。这是最容易被忽略的一处。
+
+## 碰撞：TRT（`collision="trt"`，默认）
+
+按反射对称性把分布函数拆成对称/反对称两部分，分别用两个松弛率：
+
+```
+f_i^±   = (f_i   ± f_ī)   / 2
+feq_i^± = (feq_i ± feq_ī) / 2
+
+f_post_i = f_i - ω+ (f_i^+ - feq_i^+) - ω- (f_i^- - feq_i^-)
+ω+ = 1/tau+ ,  ω- = 1/tau-
+```
+
+`tau+ = tau` 决定粘度，`tau-` 只影响不进入宏观方程的"幽灵模态"。
+低粘度时 `tau+ → 0.5`，`tau- = 0.5 + Λ/(3ν)` 反而变得很大，把那些模态
+压住——这就是 `tau+ = 0.53` 时 BGK 发散、TRT 能撑住的原因。
+`Lambda = 3/16` 是最常用的取值，壁面位置无关性最好。
+
+**力项的半格点修正因子用 `tau-`，不是 `tau+`。** 推导很短：
+
+```
+碰撞带来的动量变化  ΔM_c = ω- * F/2      (只有反对称部分携带动量)
+Guo 源项的动量      ΔM_s = (1 - ω/2) * F
+```
+
+要让 `ΔM_c + ΔM_s = F`（也就是 `u = (n + 1/2)F` 那条测试），必须取
+`ω = ω-`。用 `tau+` 会留下 `(1/tau- - 1/tau+)(F/2)` 的系统偏差，
+在 `tau+ = 0.53, Lambda = 3/16` 时这个偏差不小，力驱动算例会明显对不上。
+`tau- = tau+` 时 TRT 严格退化为 BGK，可以用这一点做单测。
 
 ## Pull streaming 与半程反弹
 

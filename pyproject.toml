@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lbm"
+version = "0.1.0"
+description = "Lattice Boltzmann solver on PyTorch (D2Q9, lattice units)"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.3",
+    "numpy>=1.24",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+h5 = ["h5py"]
+vtk = ["pyvista"]
+dev = ["pytest", "matplotlib"]
+
+[tool.setuptools.packages.find]
+include = ["lbm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: 长时间运行的测试，默认跳过",
+]
+addopts = "-m 'not slow'"

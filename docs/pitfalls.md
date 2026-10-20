@@ -31,10 +31,28 @@
 `Ny=64` 时 `Ma` 已经 0.68，测到的是压缩性误差不是格式误差，
 误差不降反升。要固定 `u_max`，让 `F ∝ 1/H^2`。
 
-**固体节点上的垃圾值**。固体节点不碰撞、不更新，pdf 保持初值 0。
-如果初值填了 `NaN`，`where` 会丢弃它，看起来没问题；但只要有任何一个
-地方对全张量做了 `sum` 或 `mean` 才发现不了，就会出现"总质量是 NaN"。
-初值统一填 0，不要填 NaN。
+**固体节点上的垃圾值**。固体节点不碰撞、不更新，pdf 应保持 0。
+如果初值填了 `NaN`，`where` 会丢弃它，看起来没问题；但任何一处对全张量
+做 `sum` 或 `mean` 都会把 NaN 带出来。初值统一填 0，不要填 NaN；
+用不到的节点每次 stream 之后显式清零。
+
+**`F/2` 也会加到固体节点上**。固体节点上 `rho = 0`，如果 `macroscopic`
+无条件地算 `m = sum(f*c) + F/2`，再除以被 `clamp_min(1e-30)` 抬上来的
+rho，就会得到 `u ~ 1e25`。这个 u 进 `feq` 之后，`cu^2` 直接把 float32
+撑成 `inf`，然后 `rho * inf = nan`，整场从边界开始烂掉。
+
+症状是：CPU 上偶尔能跑完（只是固体节点的值荒诞），MPS 上很快 NaN。
+修法是给力的那一项乘一个 `(rho > 0)` 的指标：
+
+```
+scale = (rho > 0).to(rho.dtype)
+m = m + 0.5 * force[d] * scale
+```
+
+**`(1 - 1/tau)` 在 `tau = 1` 处过零**。所以"tau 越小松弛越快"只在
+指数衰减的意义上成立，不能写成 `|f_post - feq|` 的大小比较——
+`tau=0.55` 给 `0.82|f-feq|`，`tau=1.5` 反而给 `0.33|f-feq|`。
+要验证碰撞算子就直接对解析式：`f_post - feq == (1 - 1/tau)(f - feq)`。
 
 ## PyTorch
 
@@ -65,6 +83,28 @@ MPS 上先 `float16` 再 `cpu()` 有时会报不支持的操作。
 **in-place 写要小心别名**。`dst[i, 1:, :] = f_post[i, :-1, :]` 这种写法，
 如果 `dst` 和 `f_post` 是同一块内存（忘了用双缓冲）会得到撕裂的结果，
 而且不报错，只是曲线慢慢变形。单测里加一条 `assert dst.data_ptr() != f_post.data_ptr()`。
+
+**`torch.where(..., out=视图)` 在 MPS 上会算错**（实测 torch 2.14，CPU 正常）。
+壁面反射的写法一度是
+
+```
+torch.where(wall_mask[i], f_post[opp[i]], dst[i], out=dst[i])   # MPS 上结果错误
+```
+
+它在 CPU 上完全正确、在 MPS 上从第一步就开始偏，而且不报任何错——
+`u_x` 单步变成 `1.67F` 而不是 `1.5F`，跑久了直接 NaN。改成先算临时张量
+再 `copy_` 回去就对了：
+
+```
+dst[i].copy_(torch.where(wall_mask[i], f_post[opp[i]], dst[i]))
+```
+
+不要为了省一次分配改回 `out=`。这是本项目里最隐蔽的一个坑。
+
+**float32 的动量是抵消出来的**。`sum(f*c)` 里正负方向互相抵消，
+绝对值 0.1 量级的量求和得到 1e-3 量级的结果，绝对误差固定在 1e-7 左右，
+而且**不随步数增长**。所以验证力项时要用绝对容差（`< 1e-6`），
+用相对容差会在小速度算例上莫名其妙地失败。
 
 ## 平台
 
@@ -102,6 +142,25 @@ MPS 上先 `float16` 再 `cpu()` 有时会报不支持的操作。
 
 **`diagnose()` 不要每一步都调**。它要同步、要归约，成本远超单个时间步。
 按用户的循环写法，每 `save_interval` 步调一次正好。
+
+**实测基线**（M2 8GB，`512x512`，300 步，`examples/bench.py`）：
+
+| 设备 | compile | MLUPS |
+|---|---|---|
+| mps | False | 30.7 |
+| mps | True | 70.0 |
+| cpu | False | 20.9 |
+
+编译带来 2.3 倍。绝对值偏低是对的——当前 `_stream` 每个方向 1~4 次切片拷贝，
+加一次 `where`，一步三四十个 kernel，MPS 上 launch overhead 占大头。
+真要提速，顺序是：把 `_stream` 的循环消掉（一次 `index_copy` 或自定义
+Triton kernel）> 融合 collide 与 stream。这是 P8 的事，先别动。
+
+**这台机器的 CPU 上 `torch.compile` 会 abort**。conda 环境里 torch 和
+另一个库各带一份 libomp，inductor 起子进程时直接
+`OMP: Error #15 ... abort`，进程没了。MPS 和纯 eager CPU 都正常。
+要在这台机器上跑 CPU 编译，得先设 `KMP_DUPLICATE_LIB_OK=TRUE`，
+或者干脆只对 mps/cuda 开 `compile=True`。
 
 ## 设计
 

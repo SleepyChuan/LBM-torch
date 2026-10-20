@@ -126,23 +126,28 @@ dump_setup(directory, *, total_steps, save_interval, extra=None) -> tuple[Path, 
 ## 内部数据流
 
 ```
-_step_once():
-    cur  = self.cur_idx
-    src  = self.pdf[cur]            # (Q, Nx, Ny)，只读
-    dst  = self.pdf[1 - cur]        # (Q, Nx, Ny)，写
+step(delta_step):
+    for _ in range(delta_step):
+        src  = self.pdf[self.cur_idx]          # (Q, Nx, Ny)，只读
+        dst  = self.pdf[1 - self.cur_idx]      # (Q, Nx, Ny)，写
+        self._advance(src, dst)                # compile=True 时编译的就是它
+        self.cur_idx ^= 1
+        self._step_count += 1
 
-    rho, u = macros(src, self.force)          # 含 F/2 修正
-    f_post = self.collision(src, rho, u)      # 含 Guo 源项
-    self._stream_pull(f_post, dst)            # 逐方向切片写入 + 反射覆盖
-    self._apply_open_boundary(dst)            # v1 空实现
-    self.cur_idx = 1 - cur
-    self._step_count += 1
+_advance(src, dst):                            # 纯函数式：不碰 cur_idx/count
+    rho, u = macroscopic(src, self.force)          # 含 F/2 修正
+    f_post = self.collision(src, rho, u, self.force)  # 含 Guo 源项
+    self._stream(f_post, dst)                      # 逐方向切片写入 + 反射覆盖
+    self._apply_open_boundary(dst)                 # v1 空实现
 ```
 
-顺序不能调换：`_apply_open_boundary` 必须在 `_stream_pull` 之后，
+顺序不能调换：`_apply_open_boundary` 必须在 `_stream` 之后，
 因为入口出口要修正的是"刚被拉进来、还缺方向"的分布函数。
 
 `macros` 用 `F/2` 修正、`collision` 用修正后的 `u`，两者必须一致。
+
+注意 `_step_count` 和 `cur_idx` 的更新都留在了 `step()` 里，**不进入** `_advance`。
+原因见下一节。
 
 ## 双缓冲与 cur_idx
 
@@ -152,10 +157,13 @@ _step_once():
 固定一块 `(2, ...)` 的显存、只翻转一个 int，是为了让 `torch.compile`
 的输入签名稳定——引用交换会让每次调用的 tensor 身份变化，触发反复重新编译。
 
-**一个必须提前知道的副作用**：`cur_idx` 是 Python int，`torch.compile`
-会按它的具体值做特化，"0"和"1"会各生成一份图，缓存里稳定存在 2 个变体。
-这是预期的，不要为了"只编译一次"改用 tensor 索引——那样会引入一次额外的
-gather，得不偿失。
+**关于"两个图变体"**：一开始的设计是把 `cur_idx` 当作 Python int 传进去，
+`torch.compile` 会按它的值各生成一份图，缓存里稳定是两个变体——这在功能上
+没有问题。实际实现换了个更省事的写法：把 `src` / `dst` 两块视图作为参数
+传给 `_advance(src, dst)`，两块视图的 shape/dtype/stride 完全一致，所以
+`cur_idx` 根本不进入被编译的函数，只生成**一份**图。两种都行，
+但如果以后把 `cur_idx` 塞回去，记住它会让缓存变成两份，这是预期行为，
+不要为了"只编译一次"改用 tensor 索引——那样会引入一次额外的 gather。
 
 同理，`step(delta_step)` 不要被编译。`delta_step` 每次可能不同，
 编译多步循环会让缓存膨胀。
@@ -164,7 +172,7 @@ gather，得不偿失。
 
 ```python
 if compile:
-    self._step_once = torch.compile(self._step_once)
+    self._advance = torch.compile(self._advance)
 ```
 
 失败就让它抛，不 try/except、不自动回退。用户要求如此，也确实合理：

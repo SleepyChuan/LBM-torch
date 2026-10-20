@@ -24,10 +24,10 @@
 | 架构 | 特化 + 工厂。三个 solver 各自实现 streaming，共享 python 层面的工具函数 |
 | 布局 | `pdf: (2, Q, Nx, Ny)`，`solid: (Nx, Ny)` bool |
 | 双缓冲 | 维护 `cur_idx ∈ {0,1}`，每步读 `pdf[cur_idx]` 写 `pdf[1-cur_idx]`，然后翻转索引。不做整块 copy |
-| 碰撞 | `CollisionOperator` 接口，v1 实现 BGK，预留 TRT/MRT |
+| 碰撞 | `CollisionOperator` 接口；TRT（`Λ=3/16`）为默认，BGK 保留可切换 |
 | streaming | pull，不用 `torch.roll`，逐方向切片写入目标 buffer |
 | 固体 | 半程反弹（halfway bounce-back），固体节点不参与碰撞，只在 pull 时被"反射"覆盖 |
-| 边界 | v1 只做周期边界（x、y 都是）。壁面靠域内固体实现。Zou/He 入口出口只留位置，不抽象 |
+| 边界 | 默认周期；`boundary="inlet_outlet"` 时左 Zou/He 速度入口、右 Zou/He 密度出口 |
 | 单位 | 格子单位，`cs^2 = 1/3` |
 | 精度 | 计算精度与输出精度分开指定，默认 `float32` / `float16` |
 | 驱动 | 默认不加力；Guo forcing 可选，外力是体积力密度 |
