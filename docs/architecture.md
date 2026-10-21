@@ -18,8 +18,7 @@ LBM/
 │   ├── collide/
 │   │   ├── __init__.py
 │   │   ├── base.py             # CollisionOperator 协议
-│   │   ├── bgk.py              # BGK(tau) 与 BGK(tau, force)
-│   │   └── (trt.py 未来新增)
+│   │   └── bgk.py              # BGK(tau) 与 BGK(tau, force) 
 │   ├── solvers/
 │   │   ├── __init__.py
 │   │   ├── base.py             # BaseSolver：双缓冲、IO、诊断、step 循环
@@ -34,6 +33,8 @@ LBM/
 │       ├── h5.py               # stub
 │       └── vtk.py              # stub
 ├── examples/
+|   ├── bench.py
+|   ├── karman.py
 │   └── poiseuille.py           # 端到端示例，也是 validation 的入口
 ├── tests/
 │   ├── conftest.py             # device fixture：cpu / mps / cuda
@@ -77,7 +78,7 @@ def create_solver(
     solid: torch.Tensor | None = None,   # bool, (Nx, Ny)；None 表示全流体
     *,
     nu: float,
-    Lambda: float | None = None,         # v1 忽略，为 TRT 预留
+    Lambda: float | None = None,         
     force: tuple[float, ...] | torch.Tensor | None = None,
     device: str | torch.device = "cpu",
     compute_dtype: torch.dtype = torch.float32,
@@ -138,7 +139,7 @@ _advance(src, dst):                            # 纯函数式：不碰 cur_idx/c
     rho, u = macroscopic(src, self.force)          # 含 F/2 修正
     f_post = self.collision(src, rho, u, self.force)  # 含 Guo 源项
     self._stream(f_post, dst)                      # 逐方向切片写入 + 反射覆盖
-    self._apply_open_boundary(dst)                 # v1 空实现
+    self._apply_open_boundary(dst)                 # 已实现完整 Zou/He
 ```
 
 顺序不能调换：`_apply_open_boundary` 必须在 `_stream` 之后，
