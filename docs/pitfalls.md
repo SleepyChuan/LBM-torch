@@ -56,9 +56,11 @@ m = m + 0.5 * force[d] * scale
 
 ## PyTorch
 
-**`cur_idx` 会产生两份编译图**。`torch.compile` 对 Python int 做特化，
-0 和 1 各一份，这是正常的，缓存稳定在 2 个变体。别为了"只编一次"
-把它改成 tensor 索引——那要多一次 gather。
+**`cur_idx` 不要进编译图**。实现把 `src` / `dst` 两块视图作为参数传给
+`_advance(src, dst)`，两块视图的 shape/dtype/stride 完全一致，所以
+`torch.compile` 只生成**一份**图。如果把 `cur_idx` 当参数塞回去，它会对
+Python int 特化出 0/1 两份图——功能上没问题，只是缓存翻倍。别为了
+"只编一次"把它改成 tensor 索引，那要多一次 gather。
 
 **不要用布尔索引**。`f[mask]` 需要知道 `mask` 有多少个 True，
 会触发 device→host 同步，性能直接崩。要改就预计算长整型索引张量。
@@ -66,7 +68,7 @@ m = m + 0.5 * force[d] * scale
 **不要在循环里 `.item()` / `.cpu()` / `.numpy()`**。每调一次就是一次同步。
 判断 `loss < tol` 之类的逻辑，要么放到循环外，要么接受它每 N 步才做一次。
 `diagnose()` 里可以同步，因为它本来就是一个"停下看一眼"的操作，
-但它不能在 `_step_once` 里。
+但它不能在 `_advance` 里。
 
 **`inference_mode`**。整个 `step()` 外面套 `torch.inference_mode()`。
 不做的话 autograd 会记录图，显存直接翻倍，MPS 上尤其致命。
@@ -74,7 +76,7 @@ m = m + 0.5 * force[d] * scale
 `inference_mode` 作用域内做的是 `copy_` / 原位写。
 
 **热循环里不要新建张量**。`(Q,1,1)` 的 `c`、`w`、`opp` 索引、`wall_mask`
-全部在 `__init__` 里建好。在 `_step_once` 里 `torch.tensor([...])` 一次
+全部在 `__init__` 里建好。在 `_advance` 里 `torch.tensor([...])` 一次
 就是一次 host→device 拷贝。
 
 **`.to(dtype)` 的位置**。保存时顺序固定为 `detach().cpu().to(np_dtype)`。
@@ -164,7 +166,7 @@ Triton kernel）> 融合 collide 与 stream。这是 P8 的事，先别动。
 
 ## 设计
 
-**方向编号**。`i=1` 是 `+x`，`i=2` 是 `+y`。一旦这个顺序和 `opp` 表、
+**方向编号**。`i=1` 是 `+x`，`i=2` 是 `-y`（`+y` 是 `i=4`）。一旦这个顺序和 `opp` 表、
 和切片逻辑对不上，`Poiseuille` 的 `ux` 和 `uy` 就会互换，
 表现为"抛物线出现在错误的方向上"。这是最初的 P3 不动点测试能抓到的。
 

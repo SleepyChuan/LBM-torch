@@ -47,8 +47,10 @@ def test_zero_force_keeps_fluid_at_rest(device):
     s.initialize(rho=1.0, u=None)
     s.step(200)
     _, ux, uy = s.macro()
-    assert ux.abs().max().item() < 1e-12
-    assert uy.abs().max().item() < 1e-12
+    # float32 的 sum(f*c) 是抵消求和，绝对误差 ~1e-9（CUDA 实测 1.9e-9），
+    # 阈值不能低于 fp32 的分辨率。
+    assert ux.abs().max().item() < 1e-8
+    assert uy.abs().max().item() < 1e-8
 
 
 def test_force_is_applied_only_along_given_axis(device):

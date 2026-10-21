@@ -1,6 +1,7 @@
 """VTK 输出 —— v1 未实现。
 
-将来用来把宏观量（速度、涡量）丢进 ParaView。
+签名按"存宏观量"定：``write_vtk(path, rho, u)``，用来把密度与速度场
+丢进 ParaView（涡量由后处理从速度场算）。
 """
 
 from __future__ import annotations
