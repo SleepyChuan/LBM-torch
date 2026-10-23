@@ -3,7 +3,7 @@
 USED LLM EXCLUSIVELY.
 
 格子 Boltzmann 求解器。v1 只实现 **D2Q9**，PyTorch 后端，可跑 CPU / MPS / CUDA。
-架构上按"换模型不改代码"设计，下一步是 MRT + 滑移边界 + 可变粘度。
+架构上按"换模型不改代码"设计，下一步是滑移边界 + 可变粘度。
 
 文档在 `docs/`，先读 `docs/README.md`。
 
@@ -31,7 +31,7 @@ solver = create_solver(
     (nx, ny),
     solid,
     nu=0.02,                # 运动粘度，tau = 3*nu + 0.5
-    collision="trt",        # 默认；"bgk" 可切换
+    collision="trt",        # 默认；可选 "bgk" / "mrt"
     Lambda=3.0 / 16.0,      # TRT magic parameter，默认就是 3/16
     force=(1e-6, 0.0),      # 体积力密度，默认不加力
     device="mps",
@@ -68,7 +68,7 @@ for _ in range(100):
 
 ```bash
 pytest              # 快速测试
-pytest -m slow      # Poiseuille 剖面与网格收敛；本机 cpu+cuda 实测约 3.5 分钟（带 MPS 会更久）
+pytest -m slow      # Poiseuille 剖面与网格收敛 + MRT 低粘度稳定性；本机 cpu+cuda 实测约 6 分钟
 ```
 
 ## 例子
@@ -83,4 +83,4 @@ python examples/bench.py --shape 512 512 --steps 500 --device mps
 
 - `D3Q19` / `D3Q27`：只有速度集元数据和类，`initialize` / `step` 抛 `NotImplementedError`
 - HDF5 / VTK 输出（`lbm/io/h5.py`、`lbm/io/vtk.py` 是 stub）
-- MRT / 滑移边界 / 多相 / 传热 / 多卡
+- 滑移边界 / 多相 / 传热 / 多卡

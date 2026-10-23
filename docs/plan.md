@@ -4,8 +4,8 @@
 LBM 的 bug 最恶心的地方是"跑起来了、看起来也对"，等到 Poiseuille 对不上
 再回头找，根本不知道是哪一层错了。
 
-> 状态：P0~P8 已全部落地。TRT（`collision="trt"`，默认）与 Zou/He 入口出口
-> 是 P8 之后追加的：参数见 `architecture.md`，物理见 `physics.md`。
+> 状态：P0~P8 已全部落地。TRT（`collision="trt"`，默认）、MRT（`collision="mrt"`）
+> 与 Zou/He 入口出口是 P8 之后追加的：参数见 `architecture.md`，物理见 `physics.md`。
 
 ## P0 骨架与工厂
 

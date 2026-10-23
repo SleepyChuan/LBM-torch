@@ -1,7 +1,7 @@
 # LBM on PyTorch —— 开发文档
 
 这个目录是项目从零开始的实施依据。用途是先把 D2Q9 跑通、验证正确，
-之后再改造成 MRT + 滑移边界 + 可变粘度 + 高 Knudsen 的论文版本。
+之后再改造成滑移边界 + 可变粘度 + 高 Knudsen 的论文版本。
 
 所以整体的取舍是：**数值正确性和"换模型不改代码"优先，性能第二**。
 性能只要在目标硬件上跑得动即可（M2 / MPS 做小算例，4060Ti / CUDA 做中等规模）。
@@ -10,7 +10,7 @@
 
 | 文件 | 内容 |
 |---|---|
-| `physics.md` | 格子单位、D2Q9 方向表、平衡态、BGK/TRT + Guo、pull streaming、半程反弹、周期与 Zou/He 边界、有效壁面与解析解 |
+| `physics.md` | 格子单位、D2Q9 方向表、平衡态、BGK/TRT/MRT + Guo、pull streaming、半程反弹、周期与 Zou/He 边界、有效壁面与解析解 |
 | `architecture.md` | 目录结构、模块职责、公开 API、数据流、双缓冲、IO 契约 |
 | `plan.md` | P0~P8 实施顺序，每阶段的验收标准 |
 | `validation.md` | 守恒/不动点/力响应测试、Poiseuille 算例参数与容差、收敛阶 |
@@ -24,7 +24,7 @@
 | 架构 | 特化 + 工厂。三个 solver 各自实现 streaming，共享 python 层面的工具函数 |
 | 布局 | `pdf: (2, Q, Nx, Ny)`，`solid: (Nx, Ny)` bool |
 | 双缓冲 | 维护 `cur_idx ∈ {0,1}`，每步读 `pdf[cur_idx]` 写 `pdf[1-cur_idx]`，然后翻转索引。不做整块 copy |
-| 碰撞 | `CollisionOperator` 接口；TRT（`Λ=3/16`）为默认，BGK 保留可切换 |
+| 碰撞 | `CollisionOperator` 接口；TRT（`Λ=3/16`）为默认，BGK / MRT 可切换 |
 | streaming | pull，不用 `torch.roll`，逐方向切片写入目标 buffer |
 | 固体 | 半程反弹（halfway bounce-back），固体节点不参与碰撞，只在 pull 时被"反射"覆盖 |
 | 边界 | 默认周期；`boundary="inlet_outlet"` 时左 Zou/He 速度入口、右 Zou/He 密度出口 |

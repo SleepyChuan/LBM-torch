@@ -54,8 +54,10 @@ class BaseSolver:
         self.Lambda = None if Lambda is None else float(Lambda)
 
         kind = str(collision).lower()
-        if kind not in ("bgk", "trt"):
-            raise ValueError(f"collision 只支持 'bgk' / 'trt'，收到 {collision!r}")
+        if kind not in ("bgk", "trt", "mrt"):
+            raise ValueError(
+                f"collision 只支持 'bgk' / 'trt' / 'mrt'，收到 {collision!r}"
+            )
         self.collision_kind = kind
 
         self.shape = tuple(int(s) for s in shape)

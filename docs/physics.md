@@ -128,6 +128,47 @@ Guo 源项的动量      ΔM_s = (1 - ω/2) * F
 在 `tau+ = 0.53, Lambda = 3/16` 时这个偏差不小，力驱动算例会明显对不上。
 `tau- = tau+` 时 TRT 严格退化为 BGK，可以用这一点做单测。
 
+## 碰撞：MRT（`collision="mrt"`，仅 D2Q9）
+
+按 Lallemand & Luo 的矩基投影：
+
+```
+m      = M f
+m_eq   = M feq
+m_post = m - S (m - m_eq) + (I - S/2) M F*
+f_post = M^{-1} m_post
+```
+
+矩的顺序是 `rho, e, epsilon, jx, qx, jy, qy, pxx, pxy`。LL 原矩阵的列顺序
+是 `(0,0),(1,0),(0,1),(-1,0),(0,-1),(1,1),(-1,1),(-1,-1),(1,-1)`，与本项目
+的方向表不同，`ll_matrix()` 按速度向量做列置换（行顺序不变）。
+
+```
+S = diag(0, s_e, s_eps, 0, s_q, 0, s_q, s_nu, s_nu)
+s_nu = 1/tau = 1/(nu/3 + 0.5)
+s_q  = 1/(0.5 + Lambda/(tau - 0.5))      # magic parameter，控制壁面位置
+s_e = s_eps = 1.9                         # Lallemand-Luo 的稳定取值
+```
+
+`rho` / `jx` / `jy` 是守恒矩（松弛率 0），所以碰撞严格守恒质量与动量；
+`pxx` / `pxy` 用 `s_nu`，粘度与构造参数 `nu` 一致。`Lambda` 默认 `3/16`。
+`M^{-1}` 在构造时用 float64 求逆再转到 compute dtype 缓存（`MRT.M_inv`），
+热循环里只多两次 9x9 的 `tensordot`。
+
+力项用矩空间的 `(I - S/2)`：动量行的 `S = 0`，每步动量正好增加 `F`，
+`u = (n + 1/2) F` 的约定与 BGK / TRT 一致。
+
+**能量模式不能跟着魔法参数走。** 如果令 `s_e = s_eps = s_q`（把
+`(tau_nu - 0.5)(tau_q - 0.5) = Lambda` 同时套到能量模式上），`tau = 0.53`
+时 `s_e ≈ 0.148`（`tau_e ≈ 6.75`），声学/能量模式几乎不衰减；带 Zou/He
+入口出口的绕流会从出口开始指数增长，约一万步内 `rho` 到 `inf`。
+魔法参数只约束 `s_q`（能量通量，决定半程反弹的壁面位置），能量模式必须
+用 `1.9` 这类快松弛率。`s_e = s_eps = s_nu` 时 MRT 退化为 TRT，同样稳定。
+回归用例见 `tests/test_mrt.py` 的 `test_open_boundary_low_viscosity_stays_finite`。
+
+在这套取法下，`Nx=4, Ny=16, nu=0.1` 的 Poiseuille 相对 L2 是 `0.0025%`、
+`max|uy| = 3.2e-7`（20000 步），壁面位置仍然由 magic parameter 保证。
+
 ## Pull streaming 与半程反弹
 
 时间推进写成 pull 形式：

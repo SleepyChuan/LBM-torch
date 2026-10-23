@@ -19,7 +19,8 @@ LBM-torch/
 │   │   ├── __init__.py
 │   │   ├── base.py             # CollisionOperator 协议
 │   │   ├── bgk.py              # BGK(tau) + Guo 源项
-│   │   └── trt.py              # TRT(tau+, tau-)，默认碰撞
+│   │   ├── trt.py              # TRT(tau+, tau-)
+│   │   └── mrt.py              # MRT（LL 矩基 + 列置换），D2Q9
 │   ├── solvers/
 │   │   ├── __init__.py
 │   │   ├── base.py             # BaseSolver：双缓冲、IO、诊断、step 循环
@@ -63,8 +64,8 @@ LBM-torch/
 不影响 `Q` 的方向语义。
 
 `collide/` 只关心"给我 `f, rho, u, force`，还你 `f_post`"。
-TRT 把方向按对称/反对称分组，用 `__init__` 里预置的 `opp` 索引完成拆分，
-不影响外部接口。
+TRT 把方向按对称/反对称分组，用 `__init__` 里预置的 `opp` 索引完成拆分；
+MRT 在构造时按速度向量对 LL 矩矩阵做列置换、求逆并缓存，两者都不影响外部接口。
 
 `solvers/` 是真正特化的地方。`_stream()` 每个模型写一份，
 因为不同 `c_i` 的切片组合确实不一样，抽象出来的通用版要么慢要么难读。
@@ -88,7 +89,7 @@ def create_solver(
     *,
     nu: float,                           # 运动粘度，tau = 3*nu + 0.5
     Lambda: float | None = None,         # TRT magic parameter，None 时取 3/16
-    collision: str = "trt",              # "trt" | "bgk"
+    collision: str = "trt",              # "trt" | "bgk" | "mrt"（MRT 仅 D2Q9）
     force: tuple[float, ...] | torch.Tensor | None = None,
     device: str | torch.device = "cpu",
     compute_dtype: torch.dtype = torch.float32,
@@ -109,9 +110,10 @@ def create_solver(
 
 构造期校验（都在 `BaseSolver.__init__` / `D2Q9Solver.__init__` 里一次做完）：
 
-- `nu > 0`（`tau = 3*nu + 0.5` 必然 `> 0.5`）；`collision ∈ {"bgk","trt"}`；
-  `Lambda > 0`（TRT）；`collision="bgk"` 又传 `Lambda` 时发 `RuntimeWarning`
-  并把 `Lambda` 置 `None`
+- `nu > 0`（`tau = 3*nu + 0.5` 必然 `> 0.5`）；`collision ∈ {"bgk","trt","mrt"}`；
+  `Lambda > 0`（TRT / MRT）；`collision="bgk"` 又传 `Lambda` 时发
+  `RuntimeWarning` 并把 `Lambda` 置 `None`
+- MRT 还要求 `s_q = 1/(0.5 + Lambda/(tau-0.5))` 落在 `(0,2)`；`s_e = s_eps = 1.9` 是固定值
 - `shape` 维数必须等于 stencil 维数、每维为正；`solid` 形状必须与 `shape` 一致
 - `compute_dtype` 只接受 `float32` / `float64`；MPS 上给 `float64` 直接报错；
   指定了不可用的 `cuda` / `mps` 报 `RuntimeError`
@@ -292,8 +294,9 @@ initial_rho / initial_u（描述字符串，未 initialize 时为 null）,
 created_at, lbm_version
 ```
 
-子类通过 `_extra_meta()` 还会补上运行参数：`collision`（"trt"/"bgk"）、
-TRT 的 `tau_minus`、`boundary`，`inlet_outlet` 时再加 `u_inf` / `rho_inf`。
+子类通过 `_extra_meta()` 还会补上运行参数：`collision`（"trt"/"bgk"/"mrt"）、
+TRT 的 `tau_minus`、MRT 的 `s_nu` / `s_e` / `s_q`、`boundary`，
+`inlet_outlet` 时再加 `u_inf` / `rho_inf`。
 `extra=` 传入的键在最后覆盖。
 
 `solid.npz`，键名 `solid`，值是 CPU 上的 bool 数组 `(Nx,Ny)`。

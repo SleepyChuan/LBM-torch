@@ -186,7 +186,7 @@ F = 8 * nu * u_max_target / H^2
 Ny, u_max_numeric, u_max_analytic, rel_L2, max|uy|, mass_drift, steps
 ```
 
-后面改碰撞模型（BGK → TRT）时，拿同样的表对比，才知道改动是变好了还是变坏了。
+后面改碰撞模型（BGK → TRT / MRT）时，拿同样的表对比，才知道改动是变好了还是变坏了。
 
 ### 当前实测（D2Q9, TRT Λ=3/16, float32, 已通过）
 
@@ -210,6 +210,16 @@ Ny, u_max_numeric, u_max_analytic, rel_L2, max|uy|, mass_drift, steps
 **`u_max` 那条判据可以把阈值收紧到 1%**，现在留了三个数量级的余量。
 
 cpu 与 mps 的 `ux` 最大差异 1.6e-6，说明两个后端在 float32 下行为一致。
+
+MRT（`collision="mrt"`，`s_q` 由 `(tau_nu - 0.5)(tau_q - 0.5) = Λ` 决定，
+`s_e = s_eps = 1.9`）在同一算例上（cpu，20000 步）：`u_max = 2.437569e-2`、
+内部相对 L2 `0.0025%`、`max|uy| = 3.2e-7`。壁面位置同样由 magic parameter
+保证，精度和 TRT 在一个量级。
+
+如果把 `s_e` / `s_eps` 也设成 `s_q`，这个 Poiseuille 算例（`tau=0.8`）看起来
+正常（`0.013%`），但在低粘度（`tau≈0.515`）的 Zou/He 绕流里能量模式不衰减：
+出口从 ~1000 步开始指数增长，一万步左右全场 `rho` 到 `inf`。
+`tests/test_mrt.py::test_open_boundary_low_viscosity_stays_finite` 是回归用例。
 
 `examples/poiseuille.py` 默认算例（`Nx=4, Ny=64, F=2.5e-6, 200000 步`）：
 TRT `rel_L2 = 0.017%`，BGK `0.217%`（cpu, torch 2.14, float32）。
