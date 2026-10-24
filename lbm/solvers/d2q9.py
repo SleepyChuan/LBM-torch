@@ -24,6 +24,7 @@ import warnings
 import torch
 
 from ..collide.bgk import BGK
+from ..collide.mrt import MRT
 from ..collide.trt import TRT
 from ..stencils.d2q9 import D2Q9
 from .base import BaseSolver
@@ -130,15 +131,28 @@ class D2Q9Solver(BaseSolver):
         self.collision = self._make_collision()
 
     def _make_collision(self):
-        if self.collision_kind == "trt":
+        if self.collision_kind in ("trt", "mrt"):
             # Λ 由外部指定；不指定时用 3/16（magic parameter 的常用取值）
             lam = DEFAULT_LAMBDA if self.Lambda is None else self.Lambda
             self.Lambda = lam
-            op = TRT.from_lambda(self.tau, lam, self._st.w, self._st.c, self._st.opp)
+            if self.collision_kind == "trt":
+                op = TRT.from_lambda(
+                    self.tau, lam, self._st.w, self._st.c, self._st.opp
+                )
+                self.collision_info = {
+                    "collision": "trt",
+                    "Lambda": lam,
+                    "tau_minus": op.tau_minus,
+                }
+                return op
+
+            op = MRT(self.nu, lam, self._st.w, self._st.c, self.spec.c)
             self.collision_info = {
-                "collision": "trt",
+                "collision": "mrt",
                 "Lambda": lam,
-                "tau_minus": op.tau_minus,
+                "s_nu": op.s_nu,
+                "s_e": op.s_e,
+                "s_q": op.s_q,
             }
             return op
 

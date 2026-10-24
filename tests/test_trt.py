@@ -123,4 +123,4 @@ def test_bgk_with_lambda_warns(device):
 
 def test_unknown_collision_rejected(device):
     with pytest.raises(ValueError):
-        create_solver("D2Q9", (8, 8), nu=0.1, device=device, collision="mrt")
+        create_solver("D2Q9", (8, 8), nu=0.1, device=device, collision="lattice")

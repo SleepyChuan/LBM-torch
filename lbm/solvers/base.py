@@ -54,8 +54,10 @@ class BaseSolver:
         self.Lambda = None if Lambda is None else float(Lambda)
 
         kind = str(collision).lower()
-        if kind not in ("bgk", "trt"):
-            raise ValueError(f"collision 只支持 'bgk' / 'trt'，收到 {collision!r}")
+        if kind not in ("bgk", "trt", "mrt"):
+            raise ValueError(
+                f"collision 只支持 'bgk' / 'trt' / 'mrt'，收到 {collision!r}"
+            )
         self.collision_kind = kind
 
         self.shape = tuple(int(s) for s in shape)
@@ -182,7 +184,7 @@ class BaseSolver:
     # 初始化
     # ------------------------------------------------------------------
     def initialize(self, rho: Any = 1.0, u: Any = None) -> None:
-        """用平衡态填充两个 buffer，固体节点置 0。
+        """用平衡态初始化 ``pdf[0]``，并把 ``pdf[1]`` 清零；固体节点置 0。
 
         会把 ``step_count`` 归零、``cur_idx`` 归零。
         """

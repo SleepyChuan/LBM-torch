@@ -1,7 +1,7 @@
 """碰撞算子接口。
 
 只要求"给我 f、rho、u、force，还我碰撞后的 f"。
-TRT / MRT 将来实现在同一接口下，solver 不用改。
+BGK、TRT、MRT 都在这个接口下实现，solver 不用改。
 """
 
 from __future__ import annotations

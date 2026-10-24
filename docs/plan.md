@@ -4,11 +4,15 @@
 LBM 的 bug 最恶心的地方是"跑起来了、看起来也对"，等到 Poiseuille 对不上
 再回头找，根本不知道是哪一层错了。
 
+> 状态：P0~P8 已全部落地。TRT（`collision="trt"`，默认）、MRT（`collision="mrt"`）
+> 与 Zou/He 入口出口是 P8 之后追加的：参数见 `architecture.md`，物理见 `physics.md`。
+
 ## P0 骨架与工厂
 
-建 `pyproject.toml`（`torch>=2.3`、`numpy`；可选 `pytest`、`h5py`、`pyvista`、
-`matplotlib`）。写 `LatticeSpec` 数据类、`d2q9.py` 的方向表、三个 solver 的
-类和工厂。D3 的两个类构造能成功，`_step_once` 里第一行 `raise NotImplementedError`。
+建 `pyproject.toml`（必需 `torch>=2.3`、`numpy`、`tqdm`；可选 `pytest`、`h5py`、
+`pyvista`、`matplotlib`）。写 `LatticeSpec` 数据类、`d2q9.py` 的方向表、三个
+solver 的类和工厂。D3 的两个类构造能成功，`initialize` / `step` 开头的
+`_check_implemented()` 抛 `NotImplementedError`。
 
 工厂对未知模型名抛 `ValueError`，和"未实现"区分开。
 
@@ -21,9 +25,9 @@ LBM 的 bug 最恶心的地方是"跑起来了、看起来也对"，等到 Poise
 
 `equilibrium.py`、`macros.py`。都用广播写，不区分模型。
 
-验收：`test_equilibrium.py` 用随机 `rho ∈ [0.9,1.1]`、`|u| < 0.1` 的场，
-检查三个矩条件，fp32 下误差 < 1e-5。另外检查 `u` 取反时 `feq` 满足
-`feq_i(u) = feq_opp_i(-u)`。
+验收：`test_equilibrium.py` 用随机 `rho ∈ [1.0,1.1]`（代码里 `1 + 0.1*rand`）、
+`|u| < 0.1` 的场，检查三个矩条件，fp32 下零阶矩误差 < 1e-5、一阶/二阶矩
+与对称性 < 1e-6。另外检查 `u` 取反时 `feq` 满足 `feq_i(u) = feq_opp_i(-u)`。
 
 ## P2 BGK 碰撞（无力）
 
@@ -31,12 +35,13 @@ LBM 的 bug 最恶心的地方是"跑起来了、看起来也对"，等到 Poise
 对张量调用碰撞算子。
 
 验收：`test_collision.py`——碰撞前后 `rho`、`rho*u` 不变（<1e-6）；
-输入本身就是 `feq` 时输出不变（不动点）；`tau` 越小，碰撞后偏离 `feq`
-的距离越小。
+输入本身就是 `feq` 时输出不变（不动点）；直接验解析关系
+`f_post - feq == (1 - 1/tau) * (f - feq)`（不要用 `|f_post - feq|` 比大小：
+`1 - 1/tau` 在 `tau = 1` 处过零，见 `pitfalls.md`）。
 
 ## P3 pull streaming + 周期
 
-`BaseSolver` 的双缓冲、`_step_once`、`D2Q9Solver._stream_pull`。
+`BaseSolver` 的双缓冲、`_advance`、`D2Q9Solver._stream`。
 **先只写无固体的纯周期版本**，`solid=None`。这一步不加反射。
 
 验收：`test_streaming.py`——域内均匀 `rho=1, u=(0.02, 0)` 的平衡态场，
@@ -48,7 +53,7 @@ LBM 的 bug 最恶心的地方是"跑起来了、看起来也对"，等到 Poise
 
 ## P4 固体与半程反弹
 
-预计算 9 个 `wall_mask` 和 `_has_wall` 标志，`_stream_pull` 里加反射覆盖。
+预计算 9 个 `wall_mask` 和 `_has_wall` 标志，`_stream` 里加反射覆盖。
 `macros`/`diagnose` 排除固体节点。碰撞结果只写流体节点。
 
 验收：`test_streaming.py` 续——静止流体（`rho=1, u=0`）加一个固体块，
@@ -63,7 +68,8 @@ LBM 的 bug 最恶心的地方是"跑起来了、看起来也对"，等到 Poise
 `BGK` 加源项，`macros` 加 `F/2` 修正。`force=None` 时整条路径跳过。
 
 验收：`test_forcing.py`——全域周期、无固体、`u0=0`、`F=(1e-5,0)`，
-跑 500 步后 `ux ≈ 500 * 1e-5 = 5e-3`，相对误差 < 1e-3。
+跑 100 步后 `ux ≈ (100 + 0.5) * 1e-5 = 1.005e-3`（注意那个 `+F/2`），
+用绝对容差 `< 1e-6`。单步（n=1）时 `ux = 1.5F`，噪声极小，可以卡到 `1e-7`。
 
 这个测试能单独抓出 `F/2` 修正和 `(1 - 1/(2*tau))` 因子的问题：
 少写前者，稳态速度偏 1/2；少写后者，偏差随 `tau` 变化。
@@ -93,7 +99,7 @@ MPS 上如果编译不可用，明确报错并在 `pitfalls.md` 里记下结论�
 ## 编码约定
 
 类型注解写全，`torch.Tensor` 用 `from __future__ import annotations` 省掉引号。
-所有常量张量在 `__init__` 里建好放 device 上，`_step_once` 里不新建张量
+所有常量张量在 `__init__` 里建好放 device 上，`_advance` 里不新建张量
 （除了必然存在的中间量）。
 
 日志用 `logging`，不要在库里 `print`。
@@ -103,8 +109,9 @@ MPS 上如果编译不可用，明确报错并在 `pitfalls.md` 里记下结论�
 
 ## 不要做的事
 
-不要提前做多卡。不要为了"以后可能"
-把 `_stream_pull` 抽成通用函数——那正是用户明确说不要的过度抽象。
+不要提前做多卡。不要为了"以后可能"把 `_stream` 抽成通用函数——那正是
+用户明确说不要的过度抽象。（TRT 与 Zou/He 已在 P8 之后实现，见
+`physics.md`；D3 仍然只留元数据。）
 
 不要引入 `jax`、`warp`、`numba` 做混合加速，v1 就是纯 PyTorch。
 

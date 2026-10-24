@@ -41,8 +41,10 @@ tau_minus = 0.5 + Lambda / (tau_plus - 0.5)
 | 7 | -1 | -1 | 1/36 | 5 |
 | 8 | -1 | 1 | 1/36 | 6 |
 
-自检（单测里必须写）：`c[i] = -c[opp[i]]`、`sum(w) = 1`、`sum(w*c) = 0`、
-`sum(w*c_a*c_b) = cs^2 * delta_ab`、`c[i] == -c[i]` 仅在 `i == 0` 时成立。
+自检：`c[i] = -c[opp[i]]`、`sum(w) = 1`、`sum(w*c) = 0`、
+`sum(w*c_a*c_b) = cs^2 * delta_ab` 这四条由 `LatticeSpec.check()` 在构造
+solver 时校验，`test_stencils.py` 也直接调用它；`c[i] == -c[i]` 仅在
+`i == 0` 时成立是方向表的性质，由 opp 表与对称性保证，没有单独断言。
 
 ## 平衡态
 
@@ -126,6 +128,47 @@ Guo 源项的动量      ΔM_s = (1 - ω/2) * F
 在 `tau+ = 0.53, Lambda = 3/16` 时这个偏差不小，力驱动算例会明显对不上。
 `tau- = tau+` 时 TRT 严格退化为 BGK，可以用这一点做单测。
 
+## 碰撞：MRT（`collision="mrt"`，仅 D2Q9）
+
+按 Lallemand & Luo 的矩基投影：
+
+```
+m      = M f
+m_eq   = M feq
+m_post = m - S (m - m_eq) + (I - S/2) M F*
+f_post = M^{-1} m_post
+```
+
+矩的顺序是 `rho, e, epsilon, jx, qx, jy, qy, pxx, pxy`。LL 原矩阵的列顺序
+是 `(0,0),(1,0),(0,1),(-1,0),(0,-1),(1,1),(-1,1),(-1,-1),(1,-1)`，与本项目
+的方向表不同，`ll_matrix()` 按速度向量做列置换（行顺序不变）。
+
+```
+S = diag(0, s_e, s_eps, 0, s_q, 0, s_q, s_nu, s_nu)
+s_nu = 1/tau = 1/(nu/3 + 0.5)
+s_q  = 1/(0.5 + Lambda/(tau - 0.5))      # magic parameter，控制壁面位置
+s_e = s_eps = 1.9                         # Lallemand-Luo 的稳定取值
+```
+
+`rho` / `jx` / `jy` 是守恒矩（松弛率 0），所以碰撞严格守恒质量与动量；
+`pxx` / `pxy` 用 `s_nu`，粘度与构造参数 `nu` 一致。`Lambda` 默认 `3/16`。
+`M^{-1}` 在构造时用 float64 求逆再转到 compute dtype 缓存（`MRT.M_inv`），
+热循环里只多两次 9x9 的 `tensordot`。
+
+力项用矩空间的 `(I - S/2)`：动量行的 `S = 0`，每步动量正好增加 `F`，
+`u = (n + 1/2) F` 的约定与 BGK / TRT 一致。
+
+**能量模式不能跟着魔法参数走。** 如果令 `s_e = s_eps = s_q`（把
+`(tau_nu - 0.5)(tau_q - 0.5) = Lambda` 同时套到能量模式上），`tau = 0.53`
+时 `s_e ≈ 0.148`（`tau_e ≈ 6.75`），声学/能量模式几乎不衰减；带 Zou/He
+入口出口的绕流会从出口开始指数增长，约一万步内 `rho` 到 `inf`。
+魔法参数只约束 `s_q`（能量通量，决定半程反弹的壁面位置），能量模式必须
+用 `1.9` 这类快松弛率。`s_e = s_eps = s_nu` 时 MRT 退化为 TRT，同样稳定。
+回归用例见 `tests/test_mrt.py` 的 `test_open_boundary_low_viscosity_stays_finite`。
+
+在这套取法下，`Nx=4, Ny=16, nu=0.1` 的 Poiseuille 相对 L2 是 `0.0025%`、
+`max|uy| = 3.2e-7`（20000 步），壁面位置仍然由 magic parameter 保证。
+
 ## Pull streaming 与半程反弹
 
 时间推进写成 pull 形式：
@@ -135,7 +178,7 @@ f_new_i(x) = f_post_i(x - c_i)            # 源点是流体
 f_new_i(x) = f_post_opp_i(x)              # 源点是固体 → 反射
 ```
 
-`x` 必须是流体节点；固体节点上的 pdf 不更新，保持初值（一般填 0），
+`x` 必须是流体节点；固体节点上的 pdf 不参与计算，每次 stream 之后显式清零，
 反正永远不会被读到。
 
 物理含义：碰撞在流体节点上做，分布函数向固体"拉"的时候被弹回来。
@@ -151,22 +194,22 @@ f_new_i(x) = f_post_opp_i(x)              # 源点是固体 → 反射
 
 ## 边界条件的处置方式
 
-v1：**x、y 都按周期处理**。也就是所有方向的移位都环绕。
+`boundary="periodic"`（默认，也是所有验证算例用的）：x、y 都按周期处理，
+所有方向的移位都环绕。要模拟壁面就在域内放固体行，比如 Poiseuille 用
+`solid[:, 0]` 和 `solid[:, -1]`。周期环绕不会造成问题，因为这两行是固体：
+流体节点向它们 pull 的时候走的是反射分支，根本不会绕到对面去。这样也
+不需要"边界行必须是固体"这种隐含假设。
 
-要模拟壁面，就在域内放固体行，比如 Poiseuille 用 `solid[:, 0]` 和
-`solid[:, -1]`。周期环绕本身不会造成问题，因为这两行是固体：
-流体节点向它们 pull 的时候走的是反射分支，根本不会绕到对面去。
+`boundary="inlet_outlet"`：x 方向不再周期。左边界 `x=0` 是 Zou/He 速度入口
+（`u = (u_inf, 0)`），右边界 `x=Nx-1` 是 Zou/He 密度出口（`rho = rho_inf`）；
+y 仍按周期处理。移位用 `open_slices`，够不到的列不写，随后由
+`_apply_open_boundary()` 在 streaming 之后补齐——顺序不能反，因为那里要修正
+的正是"刚被拉进来、还缺方向"的分布函数。示例见 `examples/karman.py`。
 
-这么定的好处是不需要"边界行必须是固体"这种隐含假设，也不会出现
-流体节点绕一圈跑到对面、却因为边界非周期而越界的情况。
+约束：`u_inf ∈ (-1,1)`、`rho_inf > 0`，且 `x=0` 与 `x=Nx-1` 两列必须全为
+流体（这两列一旦有固体就与 Zou/He 的假设冲突，构造时直接报错）。
 
-代价是：如果哪天想做真正的壁面边界（非周期），得改 streaming 的移位逻辑。
-记在这里，别到时候翻代码才想起来。
-
-Zou/He 入口出口（`x=0` 速度入口、`x=Nx-1` 压强出口）**只留位置**：
-在 `D2Q9Solver` 里留一个 `_apply_open_boundary()` 的空方法，`_step_once`
-末尾调用它，里面什么都不做。不做通用边界框架，不做注册机制。
-等真要写的时候，直接在 D2Q9 里加三层 `if` 都比抽象划算。
+两种模式都只有这一组参数，没有通用边界框架，也没有注册机制。
 
 ## 有效壁面与 Poiseuille 解析解
 

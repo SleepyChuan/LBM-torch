@@ -58,8 +58,8 @@ def run(args) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
     )
     if tau <= 0.51:
         print(
-            "注意：tau 接近 0.5。BGK 在这个区间会发散，TRT 靠 tau- 压住幽灵模态，"
-            "所以本算例固定用 TRT。"
+            "注意：tau 接近 0.5。BGK 在这个区间会发散；MRT 用 magic parameter "
+            "把 ghost（能量通量）模式压住（s_q << 1），能量模式保持 1.9。"
         )
 
     solid = build_cylinder_mask(args.nx, args.ny, cx, cy, r)
@@ -68,7 +68,7 @@ def run(args) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
         (args.nx, args.ny),
         solid,
         nu=nu,
-        collision="trt",
+        collision="mrt",
         Lambda=args.Lambda,
         boundary="inlet_outlet",
         u_inf=args.u_inf,
@@ -79,8 +79,8 @@ def run(args) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
         compile=args.compile,
     )
     print(
-        f"collision=trt  Lambda={args.Lambda:.4f}  tau+={solver.tau:.4f}  "
-        f"tau-={solver.collision.tau_minus:.4f}"
+        f"collision=mrt  Lambda={args.Lambda:.4f}  s_nu={solver.collision.s_nu:.4f}  "
+        f"s_e={solver.collision.s_e:.4f}  s_q={solver.collision.s_q:.4f}"
     )
     solver.initialize(rho=args.rho_inf, u=(args.u_inf, 0.0))
 
